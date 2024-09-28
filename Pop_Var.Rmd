@@ -1,0 +1,110 @@
+---
+title: "Popvar"
+author: "Pabitra"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+###PopVar is an R package used for genomic prediction and selection in plant breeding. The tool simulates the performance of potential progeny (offspring) from a set of chosen parental lines. By predicting key traits like yield, plant height, or disease resistance, it helps breeders make informed decisions about which parent combinations are most likely to produce offspring with desirable traits.
+
+##load libraries
+```{r}
+
+# Load necessary libraries
+library(PopVar)
+library(dplyr)
+library(ggplot2)
+
+
+```
+
+##Read Input Files
+```{r}
+
+# Load genotype marker data
+markers <- read.csv(file = "MarkersData.csv", header = TRUE, row.names = 1)
+markers <- markers - 1  # Adjust marker encoding (-1: major, 0: heterozygous, 1: minor allele)
+
+# Load genetic map
+GenMap <- read.csv(file = "GeneticMap.csv", header = TRUE, row.names = 1)
+
+# Load phenotypic data (BLUPs/BLUEs)
+pheno <- read.csv(file = "PhenoFile.csv", header = TRUE, row.names = 1)
+
+# Randomly select 10 parents from the phenotypic data
+set.seed(1234)
+parentList <- pheno %>% sample_n(10) %>% select(Genotype)
+parentList1 <- parentList$Genotype
+
+# Ensure consistency between markers, genetic map, and phenotypic data
+identical(colnames(markers), GenMap$SNP)
+identical(rownames(markers), pheno$Genotype)
+
+```
+
+##Prepare Marker Data for PopVar
+```{r}
+
+# Sample 100 markers randomly for faster execution
+nMarkersToKeep <- 100
+MarkersToKeep <- markers[sort(sample(length(markers), nMarkersToKeep))]
+
+# Extract relevant genetic map information
+GenMapInfo <- GenMap[colnames(MarkersToKeep),]
+
+# Ensure consistency between the markers and genetic map
+identical(rownames(GenMapInfo), colnames(MarkersToKeep))
+
+# Format markers for PopVar input
+firstrow <- c(colnames(MarkersToKeep))
+firstcol <- c("name", rownames(MarkersToKeep))
+markers1 <- rbind(firstrow, MarkersToKeep)
+markers2 <- cbind(firstcol, markers1)
+
+
+```
+
+###Run PopVar Function
+
+```{r}
+
+# Indicate traits of interest
+traits <- c("BLUPs_Yield", "BLUPs_TestWt", "BLUPs_HeadDate", "BLUPs_PlantHt")
+
+# Run PopVar with rrBLUP model and 25 simulations
+popVarOut <- pop.predict(
+  G.in = markers2, 
+  y.in = pheno[,c("Genotype", traits)], 
+  map.in = GenMapInfo, 
+  parents = parentList1, 
+  models = c("rrBLUP"), 
+  nSim = 25, 
+  nInd = 200, 
+  return.raw = TRUE
+)
+
+# Extract predictions
+PopVar_pred <- as.data.frame(popVarOut$predictions)
+df_PopVar_pred <- data.frame(lapply(PopVar_pred, unlist), stringsAsFactors = FALSE)
+write.csv(df_PopVar_pred, file = "OutputPopVar_Predictions.csv", row.names = FALSE)
+
+```
+
+##Visualize PopVar Predictions
+```{r}
+
+# Scatter plot of Mid-parent GEBV vs. Mean of top 10% progeny (Yield example)
+plot <- ggplot(df_PopVar_pred, aes(x = BLUPs_Yield_param.df.midPar.GEBV, y = BLUPs_Yield_param.df.mu.sp_high)) +
+  geom_point() +
+  geom_hline(yintercept = mean(df_PopVar_pred$BLUPs_Yield_param.df.mu.sp_high), color = "gray50", linetype = 2) +
+  geom_vline(xintercept = mean(df_PopVar_pred$BLUPs_Yield_param.df.midPar.GEBV), color = "gray50", linetype = 2) +
+  ggtitle("Predicted Yield") +
+  xlab("Predicted Mid-Parent GEBV") +
+  ylab("Predicted Mean of Top 10% Progeny") +
+  theme_minimal()
+plot
+
+```
